@@ -1,0 +1,6 @@
+Shared fitted feature vocabulary:
+buhito_featurizer.pkl
+buhito_hierarchical_model.pkl (HOMO)
+buhito_hierarchical_model_e_lumo.pkl (LUMO)
+
+If trained with different featurizers, use e_homo/ and e_lumo/ subfolders, each with its matching featurizer and model.

@@ -1,0 +1,10 @@
+shiny>=1.0
+numpy
+pandas
+scipy
+scikit-learn
+matplotlib
+Pillow
+rdkit
+joblib
+networkx
