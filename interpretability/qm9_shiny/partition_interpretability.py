@@ -1,6 +1,8 @@
 # partition_interpretability.py
 
 
+from time import perf_counter
+from copy import deepcopy
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Set, Tuple, Optional, Any
@@ -108,7 +110,7 @@ class PartitionInterpretation:
         # Best: within=1.0 → score = 1.0
         # Worst: higher=1.0 → score = -2.0
         # Range: [-2.0, 1.0] → map to [0, 1]
-        return max(0.0, min(1.0, (score + 2.0) / 3.0))
+        return (score + 2.0) / 3.0
     
     
     
@@ -241,6 +243,7 @@ def connectivity_adjusted_score(
     penalty.
 
     Entire partitions containing one atom are not penalized.
+    The adjusted score is not clipped and may be negative.
     """
     penalty = partition_connectivity_penalty(
         mol=mol,
@@ -255,10 +258,7 @@ def connectivity_adjusted_score(
         - connectivity_weight * penalty
     )
 
-    return max(
-        0.0,
-        min(1.0, adjusted_score)
-    )
+    return adjusted_score
 
 
 class PartitionInterpreter:
@@ -423,6 +423,22 @@ class PartitionInterpreter:
         return self._bitinfo_cache[
             cache_key
         ]
+
+    def get_fingerprint(self, mol):
+        """Return the cached fitted feature row, transforming only on a cache miss."""
+        return self._get_cached_fingerprint(mol)
+
+    def prime_features(self, mol, fingerprint, bitinfo):
+        """Install features from the same fitted vocabulary for this exact molecule.
+
+        Caller is responsible for matching molecule and featurizer versions.
+        Copies isolate bit-info from later transforms of the shared featurizer.
+        """
+        if fingerprint.shape != (1, len(self.bit_ids)):
+            raise ValueError('Cached feature row does not match the fitted feature vocabulary.')
+        key = self._get_molecule_cache_key(mol)
+        self._fingerprint_cache[key] = fingerprint.copy()
+        self._bitinfo_cache[key] = deepcopy(bitinfo)
 
     def register_graph(
         self,
@@ -594,8 +610,7 @@ class PartitionInterpreter:
             self._bitinfo_cache[
                 cache_key
             ] = (
-                self.featurizer
-                .bi_transform_[0]
+                deepcopy(self.featurizer.bi_transform_[0])
             )
 
         return (
@@ -1677,7 +1692,8 @@ class PartitionOptimizer:
     initial_partition: Optional[Dict[int, int]] = None,
     initialization: str = "distance",
     seed: Optional[int] = None,
-    verbose: bool = True
+    verbose: bool = True,
+    time_budget_seconds: Optional[float] = None
 ) -> PartitionInterpretation:
         """
         Optimize a molecular partition using Metropolis-Hastings with
@@ -1745,6 +1761,11 @@ class PartitionOptimizer:
                 "beta must be nonnegative."
             )
 
+        if time_budget_seconds is not None and time_budget_seconds < 0:
+            raise ValueError("time_budget_seconds must be nonnegative.")
+        deadline = None if time_budget_seconds is None else perf_counter() + time_budget_seconds
+        iterations_completed = 0
+        stopped_early = False
         rng = np.random.default_rng(seed)
 
         n_atoms = mol.GetNumAtoms()
@@ -1939,18 +1960,7 @@ class PartitionOptimizer:
             )
         )
 
-        current_score = (
-            connectivity_adjusted_score(
-                mol=mol,
-                interpretation=current_interp,
-                connectivity_weight=(
-                    self.connectivity_weight
-                ),
-                disconnected_singleton_weight=(
-                    self.disconnected_singleton_weight
-                )
-            )
-        )
+        current_score = current_raw_score - self.connectivity_weight * current_penalty
 
         # =====================================================================
         # BEST STATE
@@ -2040,6 +2050,11 @@ class PartitionOptimizer:
             1,
             n_iterations + 1
         ):
+            # Cooperative deadline: a single proposal or initialization cannot be interrupted.
+            if deadline is not None and perf_counter() >= deadline:
+                stopped_early = True
+                break
+            iterations_completed = iteration
 
             # -----------------------------------------------------------------
             # 1. Select a molecular bond uniformly.
@@ -2193,21 +2208,7 @@ class PartitionOptimizer:
                 )
             )
 
-            candidate_score = (
-                connectivity_adjusted_score(
-                    mol=mol,
-                    interpretation=(
-                        candidate_interp
-                    ),
-                    connectivity_weight=(
-                        self.connectivity_weight
-                    ),
-                    disconnected_singleton_weight=(
-                        self
-                        .disconnected_singleton_weight
-                    )
-                )
-            )
+            candidate_score = candidate_raw_score - self.connectivity_weight * candidate_penalty
 
             # -----------------------------------------------------------------
             # 8. Score change.
@@ -2372,7 +2373,7 @@ class PartitionOptimizer:
 
             print(
                 f"  Total iterations: "
-                f"{n_iterations}"
+                f"{iterations_completed}"
             )
 
             print(
@@ -2430,6 +2431,8 @@ class PartitionOptimizer:
                 f"{best_score:.6f}"
             )
 
+        best_interp.mh_iterations_completed = iterations_completed
+        best_interp.mh_stopped_early = stopped_early
         return best_interp
 
 # =============================================================================

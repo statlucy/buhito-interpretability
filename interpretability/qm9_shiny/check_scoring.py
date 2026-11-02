@@ -37,5 +37,7 @@ assert penalty(m,{0:0,1:1,2:0,3:1},2)==1
 assert penalty(m,{0:0,1:1,2:1,3:1},2)==0
 r.partition={0:0,1:1,2:0,3:1}
 assert math.isclose(ns['connectivity_adjusted_score'](m,r,.1,2),r.score-.1)
-assert ns['connectivity_adjusted_score'](m,r,10,2)==0
-print('Passed: raw score extremes, aggregation, connectivity, singleton, adjustment and clipping.')
+assert math.isclose(ns['connectivity_adjusted_score'](m,r,10,2),r.score-10)
+assert ns['connectivity_adjusted_score'](m,r,10,2)<0
+assert ns['connectivity_adjusted_score'](m,r,20,2)<ns['connectivity_adjusted_score'](m,r,10,2)
+print('Passed: raw score extremes, aggregation, connectivity, singleton, unclipped adjustment and negative-score ordering.')

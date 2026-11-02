@@ -108,7 +108,7 @@ class PartitionInterpretation:
         # Best: within=1.0 → score = 1.0
         # Worst: higher=1.0 → score = -2.0
         # Range: [-2.0, 1.0] → map to [0, 1]
-        return max(0.0, min(1.0, (score + 2.0) / 3.0))
+        return (score + 2.0) / 3.0
     
     
     
@@ -241,6 +241,7 @@ def connectivity_adjusted_score(
     penalty.
 
     Entire partitions containing one atom are not penalized.
+    The adjusted score is not clipped and may be negative.
     """
     penalty = partition_connectivity_penalty(
         mol=mol,
@@ -255,10 +256,7 @@ def connectivity_adjusted_score(
         - connectivity_weight * penalty
     )
 
-    return max(
-        0.0,
-        min(1.0, adjusted_score)
-    )
+    return adjusted_score
 
 
 class PartitionInterpreter:
