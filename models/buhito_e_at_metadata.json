@@ -1,0 +1,16 @@
+{
+  "target_key": "e_at",
+  "target_column": "E_at",
+  "label": "E_at (atomization energy, kcal/mol)",
+  "units": "kcal/mol",
+  "featurizer": "buhito_featurizer.pkl",
+  "train_features": "C:\\Users\\statl\\Documents\\GitHub\\buhito-interpretability\\features\\X_train_buhito.npz",
+  "test_features": "C:\\Users\\statl\\Documents\\GitHub\\buhito-interpretability\\features\\X_test_buhito.npz",
+  "split": "C:\\Users\\statl\\Documents\\GitHub\\buhito-interpretability\\csv\\buhito_e_homo_train_test_split.csv",
+  "n_train": 104664,
+  "n_test": 26167,
+  "n_features": 5370,
+  "test_r2": 0.9993859189699119,
+  "test_mae": 3.443405932450059,
+  "test_rmse": 5.87357518838828
+}

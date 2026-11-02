@@ -1,4 +1,4 @@
-"""Inference-only e_HOMO/e_LUMO analysis. Called serially by one isolated worker."""
+"""Analysis"""
 from pathlib import Path
 from collections import OrderedDict
 from copy import deepcopy
@@ -7,7 +7,7 @@ import numpy as np
 import joblib
 from rdkit import Chem
 from buhito.converters import smiles_to_nx
-from properties import property_config, artifact_paths
+from properties import PROPERTIES, property_config, artifact_paths
 from partition_interpretability import (PartitionInterpreter, PartitionOptimizer,
     partition_connectivity_penalty, connectivity_adjusted_score)
 
@@ -132,7 +132,7 @@ def preload_models(models_dir):
     """Runs inside the long-lived worker, before analysis is enabled in the browser."""
     started = perf_counter()
     report = {'ready': [], 'errors': {}}
-    for target in ('e_lumo', 'e_homo'):
+    for target in PROPERTIES:
         try:
             load_bundle(models_dir, target)
             report['ready'].append(target)

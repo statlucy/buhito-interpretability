@@ -37,8 +37,6 @@ app_ui = ui.page_sidebar(
         ui.input_text('smiles','SMILES','COC12CC1OC2CO'),
         ui.input_checkbox_group('ks','Number of partitions (k)',
             {str(k):str(k) for k in range(2,6)},selected=['2'],inline=True),
-        ui.input_checkbox('fast_mode', 'Fast analysis (25-second computation target)', True),
-        ui.p('A time target, not a guarantee. Loading and individual operations can take longer.'),
         ui.input_numeric('iterations','Maximum MH iterations per k',1000,min=1,max=100000),
         ui.input_numeric('beta','MH beta',20,min=0,max=1000),
         ui.input_select('initialization','Initialization',{'distance':'Distance','random':'Random'}),
@@ -146,7 +144,7 @@ def server(input, output, session):
             if not 0 <= beta <= 1000 or not 0 <= weight <= 10 or not 1 <= singleton <= 100:
                 raise ValueError('Search settings are outside their allowed ranges.')
             args = (input.smiles(),ks,int(iterations),float(beta),input.initialization(),
-                    int(seed),float(weight),float(singleton),MODEL_DIR,input.target(),25.0 if input.fast_mode() else None)
+                    int(seed),float(weight),float(singleton),MODEL_DIR,input.target(),None)
             completed.set(None)
             message.set(f'Running {property_config(input.target())["label"]} Metropolis–Hastings… Results will appear when all selected k values finish.')
             busy.set(True)

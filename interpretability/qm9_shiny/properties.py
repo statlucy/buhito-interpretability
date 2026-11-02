@@ -4,7 +4,12 @@ from pathlib import Path
 PROPERTIES = {
     'e_lumo': {'label': 'e_LUMO', 'model_file': 'buhito_hierarchical_model_e_lumo.pkl'},
     'e_homo': {'label': 'e_HOMO', 'model_file': 'buhito_hierarchical_model.pkl'},
+    "e_at": {
+    "label": "E_at (atomization energy, kcal/mol)",
+    "model_file": "buhito_hierarchical_model_e_at.pkl",
+},
 }
+
 
 def property_config(target):
     if target not in PROPERTIES:
