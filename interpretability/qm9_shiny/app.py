@@ -54,6 +54,7 @@ app_ui = ui.page_sidebar(
     ui.output_ui('preparation_status'),
     ui.output_ui('status'),
     ui.output_ui('results'),
+    ui.output_ui('run_details'),
     ui.tags.details(ui.tags.summary('How the connectivity penalty works'),
         ui.p('Within each partition, keep one largest connected component. For every other component, '
              'add its atom count, or the disconnected singleton weight if it contains one atom. '
@@ -192,6 +193,23 @@ def server(input, output, session):
         return ui.div(message(),class_='alert alert-info',role='status')
 
     @render.ui
+    def run_details():
+        payload = completed()
+        if payload is None:
+            return None
+        stage_times = ', '.join(
+            f'{name}: {value:.2f}' for name, value in payload.get('timings', {}).items()
+        ) or 'unavailable'
+        reused = ', '.join(
+            name for name, hit in payload.get('preprocessing_cache', {}).items() if hit
+        ) or 'none'
+        return ui.tags.details(
+            ui.tags.summary('Run details'),
+            ui.p('Worker stage times (seconds; original run for cached results): ' + stage_times),
+            ui.p('Reused preprocessing: ' + reused),
+        )
+
+    @render.ui
     def results():
         payload = completed()
         if payload is None:
@@ -207,10 +225,6 @@ def server(input, output, session):
         return ui.div(
             ui.h4(f"Predicted {payload['property_label']}: {payload['prediction']:.6g} (dataset units)"),
             ui.p('SMILES: '+payload['smiles']),
-            ui.p('Worker stage times (seconds; original run for cached results): ' +
-                 ', '.join(f'{name}: {value:.2f}' for name,value in payload.get('timings', {}).items())),
-            ui.p('Reused preprocessing: ' + (', '.join(
-                name for name,hit in payload.get('preprocessing_cache', {}).items() if hit) or 'none')),
             ui.navset_tab(*panels),
             ui.h4('Result summary'),ui.output_data_frame('summary'),
             ui.download_button('csv_download','Download summary CSV'),
