@@ -1,6 +1,7 @@
-"""Molecule drawing and score panels use the notebook's exact definitions."""
+"""Molecule drawing and score panels"""
 import io
 import numpy as np
+from matplotlib import colormaps
 from matplotlib.figure import Figure
 from PIL import Image
 from properties import property_config
@@ -12,6 +13,20 @@ PARTITION_COLORS = {0:(.35,.55,1.), 1:(1.,.35,.35), 2:(.35,.80,.45),
                     3:(.80,.55,1.), 4:(1.,.70,.25)}
 CATEGORY_COLORS = ['#4f87d6', '#ef9250', '#a078ca']
 
+
+def partition_color(partition_id):
+    """Return a stable color for any partition label.
+
+    The original five colors are preserved. Labels above four use Matplotlib's
+    20-color qualitative palette, which then repeats for exceptionally large
+    values of k rather than causing a plotting error.
+    """
+    partition_id = int(partition_id)
+    if partition_id in PARTITION_COLORS:
+        return PARTITION_COLORS[partition_id]
+    return tuple(float(value) for value in colormaps['tab20'](partition_id % 20)[:3])
+
+
 def mol_to_partition_image(mol, partition, img_size=(650,650)):
     mol = Chem.Mol(mol)
     rdDepictor.Compute2DCoords(mol)
@@ -21,11 +36,11 @@ def mol_to_partition_image(mol, partition, img_size=(650,650)):
     options.fillHighlights = True
     options.highlightRadius = .35
     options.bondLineWidth = 3
-    atoms = {a:PARTITION_COLORS.get(p,(.75,.75,.75)) for a,p in partition.items()}
+    atoms = {a: partition_color(p) for a,p in partition.items()}
     bonds = {}
     for bond in mol.GetBonds():
         p,q = partition[bond.GetBeginAtomIdx()],partition[bond.GetEndAtomIdx()]
-        bonds[bond.GetIdx()] = PARTITION_COLORS.get(p,(.75,.75,.75)) if p==q else (.60,.60,.60)
+        bonds[bond.GetIdx()] = partition_color(p) if p == q else (.60,.60,.60)
     drawer.DrawMolecule(mol, highlightAtoms=list(atoms), highlightAtomColors=atoms,
                         highlightBonds=list(bonds), highlightBondColors=bonds)
     drawer.FinishDrawing()
@@ -40,9 +55,9 @@ def result_figure(payload, index):
     ax.axis('off')
     ax.set_title(f"{property_config(payload.get('target', 'e_lumo'))['label']} | Metropolis–Hastings | k={r['k']}" + (' (time limited)' if r.get('stopped_early', False) else ''),fontweight='bold',fontsize=14)
     from matplotlib.patches import Patch
-    ax.legend(handles=[Patch(facecolor=PARTITION_COLORS[p],label=f'P{p}')
+    ax.legend(handles=[Patch(facecolor=partition_color(p),label=f'P{p}')
                        for p in sorted(set(r['partition'].values()))],loc='lower center',
-              ncol=r['k'],frameon=False)
+              ncol=min(r['k'], 5),frameon=False)
     categories = ['Within','Between','Higher order']
     b = r['breakdown']
     fractions = [b['within_frac'],b['between_frac'],b['higher_frac']]

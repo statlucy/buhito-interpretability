@@ -413,6 +413,47 @@ class PartitionInterpreter:
         """
         return self._get_cached_fingerprint(mol)
 
+    def prime_features(
+        self,
+        mol: Chem.Mol,
+        fingerprint,
+        bitinfo: Dict,
+    ):
+        """Seed this interpreter with previously computed molecule features.
+
+        A newly created interpreter can reuse a fingerprint and its matching
+        Buhito graphlet-location dictionary from the worker-level feature
+        cache.  The molecule's graph must have been registered first.
+        """
+        cache_key = self._get_molecule_cache_key(mol)
+        self._get_cached_graph(mol)
+
+        if not hasattr(fingerprint, "tocsr"):
+            raise TypeError("fingerprint must be a SciPy sparse matrix.")
+        fingerprint = fingerprint.tocsr()
+        if fingerprint.shape[-1] != len(self.bit_ids):
+            raise ValueError(
+                "Fingerprint feature count does not match the fitted "
+                "Buhito vocabulary."
+            )
+        if not isinstance(bitinfo, dict):
+            raise TypeError("bitinfo must be a dictionary keyed by graphlet bit ID.")
+
+        self._fingerprint_cache[cache_key] = fingerprint
+        self._bitinfo_cache[cache_key] = bitinfo
+
+        # Cached instances depend on the fingerprint/bit-information pair.
+        for cache in (
+            self._instance_cache,
+            self._contributing_instance_cache,
+            self._atom_to_instances_cache,
+            self._prediction_cache,
+            self._full_prediction_cache,
+        ):
+            cache.pop(cache_key, None)
+
+        return fingerprint
+
     def get_bitinfo(
         self,
         mol: Chem.Mol,

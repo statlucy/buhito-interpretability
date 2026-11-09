@@ -35,8 +35,10 @@ app_ui = ui.page_sidebar(
         ui.input_select('target', 'Property to predict',
             {key: value['label'] for key, value in PROPERTIES.items()}, selected='e_lumo'),
         ui.input_text('smiles','SMILES','COC12CC1OC2CO'),
-        ui.input_checkbox_group('ks','Number of partitions (k)',
-            {str(k):str(k) for k in range(2,6)},selected=['2'],inline=True),
+        ui.input_text('ks', 'Partition numbers (comma-separated)', '2, 3',
+            placeholder='For example: 2, 4, 6'),
+        ui.p('Enter one or more integer values. Each must be at least 2 and no greater than the molecule’s atom count, including explicit hydrogens.',
+             class_='text-muted small'),
         ui.input_numeric('iterations','Maximum MH iterations per k',1000,min=1,max=100000),
         ui.input_numeric('beta','MH beta',20,min=0,max=1000),
         ui.input_select('initialization','Initialization',{'distance':'Distance','random':'Random'}),
@@ -128,11 +130,24 @@ def server(input, output, session):
             message.set('The selected model is not ready. Check preparation errors and retry.')
             return
         try:
-            ks = tuple(int(k) for k in input.ks())
+            raw_ks = input.ks().strip()
+            try:
+                parts = [part.strip() for part in raw_ks.split(',')]
+                if not parts or any(not part for part in parts):
+                    raise ValueError
+                ks = tuple(int(part) for part in parts)
+            except ValueError:
+                raise ValueError(
+                    'Enter one or more comma-separated whole numbers, for example: 2, 4, 6.'
+                )
             iterations, seed = input.iterations(),input.seed()
             beta, weight, singleton = input.beta(),input.weight(),input.singleton()
             if not input.smiles().strip() or not ks:
-                raise ValueError('Enter a SMILES string and select at least one k.')
+                raise ValueError('Enter a SMILES string and at least one partition number.')
+            if any(k < 2 for k in ks):
+                raise ValueError('Each partition number must be at least 2.')
+            if len(set(ks)) != len(ks):
+                raise ValueError('Enter each partition number only once.')
             import math
             nums = [iterations, seed, beta, weight, singleton]
             if any(v is None or not math.isfinite(v) for v in nums):
@@ -273,7 +288,10 @@ def server(input, output, session):
             yield buf.getvalue()
         output(id=f'png_{k}')(png)
 
-    for k in range(2,6): register_k(k)
+    # A molecule can contain at most 100 explicit atoms in this app, so
+    # register every allowable output ID once. Only requested k values are
+    # inserted into the UI and evaluated.
+    for k in range(2,101): register_k(k)
 
     def rows(payload):
         return [dict(Iterations_completed=r.get('iterations_completed'),
