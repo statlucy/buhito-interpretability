@@ -197,18 +197,13 @@ def server(input, output, session):
         if payload is None:
             return ui.p('Required for this property: buhito_featurizer.pkl and ' +
                         property_config(input.target())['model_file'] + '. Select settings and click Analyze molecule.')
-        panels = [ui.nav_panel(f"k = {r['k']}",ui.output_plot(f'plot_{r["k"]}',height='760px'),
+        panels = [ui.nav_panel(f"k = {r['k']}",
+                              ui.output_plot(f'plot_{r["k"]}', height='760px'),
+                              ui.h4('Metropolis–Hastings diagnostics'),
+                              ui.output_ui(f'diagnostics_{r["k"]}'),
+                              ui.output_plot(f'mh_plot_{r["k"]}', height='340px'),
                               ui.download_button(f'png_{r["k"]}','Download PNG'))
                   for r in payload['results']]
-        mh_sections = [
-            ui.div(
-                ui.h5(f"k = {r['k']}"),
-                ui.output_ui(f'diagnostics_{r["k"]}'),
-                ui.output_plot(f'mh_plot_{r["k"]}', height='340px'),
-                class_='border rounded p-3 mb-3'
-            )
-            for r in payload['results']
-        ]
         return ui.div(
             ui.h4(f"Predicted {payload['property_label']}: {payload['prediction']:.6g} (dataset units)"),
             ui.p('SMILES: '+payload['smiles']),
@@ -217,8 +212,6 @@ def server(input, output, session):
             ui.p('Reused preprocessing: ' + (', '.join(
                 name for name,hit in payload.get('preprocessing_cache', {}).items() if hit) or 'none')),
             ui.navset_tab(*panels),
-            ui.h4('Metropolis–Hastings diagnostics'),
-            *mh_sections,
             ui.h4('Result summary'),ui.output_data_frame('summary'),
             ui.download_button('csv_download','Download summary CSV'),
             ui.download_button('atom_download','Download atom partitions CSV'))
