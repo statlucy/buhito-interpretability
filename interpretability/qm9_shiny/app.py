@@ -277,7 +277,7 @@ def server(input, output, session):
 
     def rows(payload):
         return [dict(Iterations_completed=r.get('iterations_completed'),
-            Time_limited=r.get('stopped_early', False), Search_seconds=r.get('search_seconds'),
+            Search_seconds=r.get('search_seconds'),
             Property=payload['target'],SMILES=payload['smiles'],k=r['k'],Prediction=r['prediction'],
             Raw=r['raw'],Penalty=r['penalty'],Adjusted=r['adjusted'],
             Within=r['signed'][0],Between=r['signed'][1],Higher=r['signed'][2],
