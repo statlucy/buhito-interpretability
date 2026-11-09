@@ -1,4 +1,4 @@
-"""Molecule drawing and score panels."""
+"""Molecule drawing and score panels use the notebook's exact definitions."""
 import io
 import numpy as np
 from matplotlib.figure import Figure
@@ -64,4 +64,28 @@ def result_figure(payload, index):
     for j,v in enumerate(vals):
         ax2.text(v + (.02 * span if v >= 0 else -.02 * span), j, f'{v:.3g}',
                  va='center', ha='left' if v >= 0 else 'right')
+    return fig
+
+
+def mh_diagnostics_figure(payload, index):
+    """Histogram of the states occupied by the MH chain for one k value."""
+    r = payload['results'][index]
+    diagnostics = r.get('mh_diagnostics') or {}
+    energy_trace = diagnostics.get('energy_trace', [])
+    fig = Figure(figsize=(9, 3.2), layout='constrained', facecolor='white')
+    ax = fig.add_subplot(1, 1, 1)
+    if energy_trace:
+        bins = min(30, max(5, int(np.sqrt(len(energy_trace)))))
+        ax.hist(energy_trace, bins=bins, color='#5b8fbc', edgecolor='white')
+        ax.axvline(energy_trace[-1], color='#d86060', linewidth=1.5,
+                   label='Final state')
+        ax.axvline(-diagnostics.get('best_score', r['adjusted']), color='#459c75',
+                   linewidth=1.5, linestyle='--', label='Best state')
+        ax.legend(frameon=False, fontsize=8)
+    else:
+        ax.text(.5, .5, 'No MH trace available', ha='center', va='center',
+                transform=ax.transAxes)
+    ax.set_title(f"Histogram of MH states visited (k = {r['k']})", fontweight='bold')
+    ax.set_xlabel('Energy: E = − adjusted score (dimensionless)')
+    ax.set_ylabel('Frequency (iterations)')
     return fig

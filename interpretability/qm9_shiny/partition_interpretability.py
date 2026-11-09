@@ -1,8 +1,6 @@
 # partition_interpretability.py
 
 
-from time import perf_counter
-from copy import deepcopy
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Set, Tuple, Optional, Any
@@ -110,7 +108,7 @@ class PartitionInterpretation:
         # Best: within=1.0 → score = 1.0
         # Worst: higher=1.0 → score = -2.0
         # Range: [-2.0, 1.0] → map to [0, 1]
-        return (score + 2.0) / 3.0
+        return max(0.0, min(1.0, (score + 2.0) / 3.0))
     
     
     
@@ -243,7 +241,6 @@ def connectivity_adjusted_score(
     penalty.
 
     Entire partitions containing one atom are not penalized.
-    The adjusted score is not clipped and may be negative.
     """
     penalty = partition_connectivity_penalty(
         mol=mol,
@@ -258,7 +255,10 @@ def connectivity_adjusted_score(
         - connectivity_weight * penalty
     )
 
-    return adjusted_score
+    return max(
+        0.0,
+        min(1.0, adjusted_score)
+    )
 
 
 class PartitionInterpreter:
@@ -401,6 +401,18 @@ class PartitionInterpreter:
                 atom_indices
             ] = 0.0
 
+    def get_fingerprint(
+        self,
+        mol: Chem.Mol,
+    ):
+        """Return the cached graphlet fingerprint for a registered molecule.
+
+        This public wrapper initializes the matching bit-information cache as
+        well, so callers can safely obtain both through ``get_fingerprint``
+        and ``get_bitinfo`` without relying on a private cache method.
+        """
+        return self._get_cached_fingerprint(mol)
+
     def get_bitinfo(
         self,
         mol: Chem.Mol,
@@ -423,22 +435,6 @@ class PartitionInterpreter:
         return self._bitinfo_cache[
             cache_key
         ]
-
-    def get_fingerprint(self, mol):
-        """Return the cached fitted feature row, transforming only on a cache miss."""
-        return self._get_cached_fingerprint(mol)
-
-    def prime_features(self, mol, fingerprint, bitinfo):
-        """Install features from the same fitted vocabulary for this exact molecule.
-
-        Caller is responsible for matching molecule and featurizer versions.
-        Copies isolate bit-info from later transforms of the shared featurizer.
-        """
-        if fingerprint.shape != (1, len(self.bit_ids)):
-            raise ValueError('Cached feature row does not match the fitted feature vocabulary.')
-        key = self._get_molecule_cache_key(mol)
-        self._fingerprint_cache[key] = fingerprint.copy()
-        self._bitinfo_cache[key] = deepcopy(bitinfo)
 
     def register_graph(
         self,
@@ -610,7 +606,8 @@ class PartitionInterpreter:
             self._bitinfo_cache[
                 cache_key
             ] = (
-                deepcopy(self.featurizer.bi_transform_[0])
+                self.featurizer
+                .bi_transform_[0]
             )
 
         return (
@@ -1692,8 +1689,7 @@ class PartitionOptimizer:
     initial_partition: Optional[Dict[int, int]] = None,
     initialization: str = "distance",
     seed: Optional[int] = None,
-    verbose: bool = True,
-    time_budget_seconds: Optional[float] = None
+    verbose: bool = True
 ) -> PartitionInterpretation:
         """
         Optimize a molecular partition using Metropolis-Hastings with
@@ -1761,11 +1757,6 @@ class PartitionOptimizer:
                 "beta must be nonnegative."
             )
 
-        if time_budget_seconds is not None and time_budget_seconds < 0:
-            raise ValueError("time_budget_seconds must be nonnegative.")
-        deadline = None if time_budget_seconds is None else perf_counter() + time_budget_seconds
-        iterations_completed = 0
-        stopped_early = False
         rng = np.random.default_rng(seed)
 
         n_atoms = mol.GetNumAtoms()
@@ -1960,7 +1951,18 @@ class PartitionOptimizer:
             )
         )
 
-        current_score = current_raw_score - self.connectivity_weight * current_penalty
+        current_score = (
+            connectivity_adjusted_score(
+                mol=mol,
+                interpretation=current_interp,
+                connectivity_weight=(
+                    self.connectivity_weight
+                ),
+                disconnected_singleton_weight=(
+                    self.disconnected_singleton_weight
+                )
+            )
+        )
 
         # =====================================================================
         # BEST STATE
@@ -1984,6 +1986,14 @@ class PartitionOptimizer:
         same_partition_proposals = 0
         singleton_source_proposals = 0
         valid_move_proposals = 0
+
+        # Record the state occupied by the chain after every proposed step.
+        # The optimization maximizes ``current_score``; its corresponding MH
+        # energy is E = -current_score, so that the rule is
+        # exp[-beta * (E_candidate - E_current)].  Including repeated values
+        # from rejected/invalid proposals accurately represents time spent in
+        # each state rather than only the accepted moves.
+        score_trace = [float(current_score)]
 
         # =====================================================================
         # PRINT INITIAL INFORMATION
@@ -2050,11 +2060,6 @@ class PartitionOptimizer:
             1,
             n_iterations + 1
         ):
-            # Cooperative deadline: a single proposal or initialization cannot be interrupted.
-            if deadline is not None and perf_counter() >= deadline:
-                stopped_early = True
-                break
-            iterations_completed = iteration
 
             # -----------------------------------------------------------------
             # 1. Select a molecular bond uniformly.
@@ -2110,6 +2115,7 @@ class PartitionOptimizer:
             ):
 
                 same_partition_proposals += 1
+                score_trace.append(float(current_score))
                 continue
 
             # -----------------------------------------------------------------
@@ -2129,6 +2135,7 @@ class PartitionOptimizer:
             if source_partition_size <= 1:
 
                 singleton_source_proposals += 1
+                score_trace.append(float(current_score))
                 continue
 
             valid_move_proposals += 1
@@ -2208,7 +2215,21 @@ class PartitionOptimizer:
                 )
             )
 
-            candidate_score = candidate_raw_score - self.connectivity_weight * candidate_penalty
+            candidate_score = (
+                connectivity_adjusted_score(
+                    mol=mol,
+                    interpretation=(
+                        candidate_interp
+                    ),
+                    connectivity_weight=(
+                        self.connectivity_weight
+                    ),
+                    disconnected_singleton_weight=(
+                        self
+                        .disconnected_singleton_weight
+                    )
+                )
+            )
 
             # -----------------------------------------------------------------
             # 8. Score change.
@@ -2321,6 +2342,9 @@ class PartitionOptimizer:
                         iteration
                     )
 
+            # Record the (possibly unchanged) state after this MH step.
+            score_trace.append(float(current_score))
+
             # -----------------------------------------------------------------
             # Progress reporting.
             # -----------------------------------------------------------------
@@ -2373,7 +2397,7 @@ class PartitionOptimizer:
 
             print(
                 f"  Total iterations: "
-                f"{iterations_completed}"
+                f"{n_iterations}"
             )
 
             print(
@@ -2431,8 +2455,32 @@ class PartitionOptimizer:
                 f"{best_score:.6f}"
             )
 
-        best_interp.mh_iterations_completed = iterations_completed
-        best_interp.mh_stopped_early = stopped_early
+        # Attach diagnostics to the returned best interpretation so callers
+        # can report chain behavior without changing the public return type.
+        # Use ordinary Python values to keep worker-process payloads compact
+        # and serialization-friendly.
+        rejected_valid_moves = valid_move_proposals - accepted_moves
+        best_interp.mh_iterations_completed = int(n_iterations)
+        best_interp.mh_stopped_early = False
+        best_interp.mh_diagnostics = {
+            "beta": float(beta),
+            "score_trace": score_trace,
+            "energy_trace": [-value for value in score_trace],
+            "iterations": int(n_iterations),
+            "valid_proposals": int(valid_move_proposals),
+            "accepted_moves": int(accepted_moves),
+            "accepted_improving_moves": int(accepted_improving_moves),
+            "accepted_worse_moves": int(accepted_worse_moves),
+            "rejected_valid_moves": int(rejected_valid_moves),
+            "same_partition_proposals": int(same_partition_proposals),
+            "singleton_source_proposals": int(singleton_source_proposals),
+            "acceptance_rate": float(acceptance_rate),
+            "initial_score": float(score_trace[0]),
+            "final_score": float(score_trace[-1]),
+            "best_score": float(best_score),
+            "best_iteration": int(best_iteration),
+        }
+
         return best_interp
 
 # =============================================================================

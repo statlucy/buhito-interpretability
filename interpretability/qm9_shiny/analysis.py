@@ -1,4 +1,4 @@
-"""Analysis"""
+"""Inference-only e_HOMO/e_LUMO analysis. Called serially by one isolated worker."""
 from pathlib import Path
 from collections import OrderedDict
 from copy import deepcopy
@@ -241,7 +241,8 @@ def analyze(smiles, ks, iterations, beta, initialization, seed, weight, singleto
             penalty=float(partition_connectivity_penalty(mol, partition, singleton_weight)),
             adjusted=float(connectivity_adjusted_score(mol, interp, weight, singleton_weight)),
             prediction=prediction, reconstructed=reconstructed,
-            error=abs(reconstructed-prediction)))
+            error=abs(reconstructed-prediction),
+            mh_diagnostics=getattr(interp, 'mh_diagnostics', None)))
     timings['partition_search'] = sum(r['search_seconds'] for r in results)
     complete = len(results) == len(ks) and all(not r['stopped_early'] for r in results)
     payload = dict(elapsed_seconds=perf_counter()-started, timings=timings,

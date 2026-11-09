@@ -11,7 +11,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use('Agg')
 from shiny import App, reactive, render, ui, req
-from plots import result_figure
+from plots import result_figure, mh_diagnostics_figure
 from properties import PROPERTIES, property_config
 from worker_tasks import preload, run_analysis
 
@@ -185,6 +185,15 @@ def server(input, output, session):
         panels = [ui.nav_panel(f"k = {r['k']}",ui.output_plot(f'plot_{r["k"]}',height='760px'),
                               ui.download_button(f'png_{r["k"]}','Download PNG'))
                   for r in payload['results']]
+        mh_sections = [
+            ui.div(
+                ui.h5(f"k = {r['k']}"),
+                ui.output_ui(f'diagnostics_{r["k"]}'),
+                ui.output_plot(f'mh_plot_{r["k"]}', height='340px'),
+                class_='border rounded p-3 mb-3'
+            )
+            for r in payload['results']
+        ]
         return ui.div(
             ui.h4(f"Predicted {payload['property_label']}: {payload['prediction']:.6g} (dataset units)"),
             ui.p('SMILES: '+payload['smiles']),
@@ -193,12 +202,58 @@ def server(input, output, session):
             ui.p('Reused preprocessing: ' + (', '.join(
                 name for name,hit in payload.get('preprocessing_cache', {}).items() if hit) or 'none')),
             ui.navset_tab(*panels),
+            ui.h4('Metropolis–Hastings diagnostics'),
+            *mh_sections,
             ui.h4('Result summary'),ui.output_data_frame('summary'),
             ui.download_button('csv_download','Download summary CSV'),
             ui.download_button('atom_download','Download atom partitions CSV'))
 
     # Register fixed output IDs once; only selected tabs are displayed.
     def register_k(k):
+        @render.ui
+        def diagnostics():
+            payload = completed()
+            req(payload is not None)
+            result = next((r for r in payload['results'] if r['k'] == k), None)
+            req(result is not None)
+            d = result.get('mh_diagnostics') or {}
+            if not d:
+                return ui.p('MH diagnostics are unavailable for this result.', class_='text-muted')
+            invalid = d['same_partition_proposals'] + d['singleton_source_proposals']
+            return ui.div(
+                ui.h5('MH diagnostics'),
+                ui.p(
+                    f"β = {d['beta']:.3g} inverse adjusted-score units "
+                    "(the adjusted score and energy are dimensionless)."
+                ),
+                ui.tags.ul(
+                    ui.tags.li(
+                        f"Accepted moves: {d['accepted_moves']} "
+                        f"({d['acceptance_rate']:.1%} of {d['valid_proposals']} valid proposals)"
+                    ),
+                    ui.tags.li(f"Rejected valid moves: {d['rejected_valid_moves']}"),
+                    ui.tags.li(
+                        f"Invalid proposals: {invalid} ({d['same_partition_proposals']} same-partition; "
+                        f"{d['singleton_source_proposals']} would empty a partition)"
+                    ),
+                    ui.tags.li(
+                        f"Accepted improvements: {d['accepted_improving_moves']}; "
+                        f"accepted worse moves: {d['accepted_worse_moves']}"
+                    )
+                ),
+                class_='mb-2'
+            )
+        output(id=f'diagnostics_{k}')(diagnostics)
+
+        @render.plot
+        def mh_plot():
+            payload = completed()
+            req(payload is not None)
+            indexes = [i for i, r in enumerate(payload['results']) if r['k'] == k]
+            req(bool(indexes))
+            return mh_diagnostics_figure(payload, indexes[0])
+        output(id=f'mh_plot_{k}')(mh_plot)
+
         @render.plot
         def plot():
             payload = completed()
@@ -226,7 +281,13 @@ def server(input, output, session):
             Property=payload['target'],SMILES=payload['smiles'],k=r['k'],Prediction=r['prediction'],
             Raw=r['raw'],Penalty=r['penalty'],Adjusted=r['adjusted'],
             Within=r['signed'][0],Between=r['signed'][1],Higher=r['signed'][2],
-            Reconstruction_error=r['error'],**payload['settings']) for r in payload['results']]
+            Reconstruction_error=r['error'],
+            Accepted_moves=(r.get('mh_diagnostics') or {}).get('accepted_moves'),
+            Rejected_valid_moves=(r.get('mh_diagnostics') or {}).get('rejected_valid_moves'),
+            Invalid_same_partition=(r.get('mh_diagnostics') or {}).get('same_partition_proposals'),
+            Invalid_singleton_source=(r.get('mh_diagnostics') or {}).get('singleton_source_proposals'),
+            Acceptance_rate=(r.get('mh_diagnostics') or {}).get('acceptance_rate'),
+            **payload['settings']) for r in payload['results']]
 
     def format_summary_value(value):
         """Format real-valued table cells to three significant figures only for display."""

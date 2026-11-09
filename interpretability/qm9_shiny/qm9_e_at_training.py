@@ -4,7 +4,7 @@ Run this from the directory that contains ``models``, ``features``, and ``csv``:
 
     python qm9_e_at_training.py
 
-The script intentionally does not fit a new featurizer.  It requires the
+Requires the
 existing ``buhito_featurizer.pkl``, ``X_train_buhito.npz``, and
 ``X_test_buhito.npz`` so the saved E_at model is compatible with the app's
 existing feature order.
