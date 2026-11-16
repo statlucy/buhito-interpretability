@@ -81,6 +81,9 @@ class PartitionInterpretation:
     total_prediction: float
     partition: Dict[int, int]
     atom_baseline: float = 0.0  # NEW: For structure-only mode
+    within_score_weight: float = 1.0
+    between_score_weight: float = -0.5
+    higher_score_weight: float = -2.0
     
     @property
     def score(self) -> float:
@@ -89,7 +92,7 @@ class PartitionInterpretation:
         Higher score = more interpretable (more within-partition, less interaction)
         
         Returns:
-            Score in [0, 1], higher is better
+            Unnormalized weighted score; higher is better
         """
         # Use sum of absolute contributions (consistent with breakdown)
         within_total = sum(abs(v) for v in self.within_partition.values())
@@ -101,14 +104,12 @@ class PartitionInterpretation:
         between_frac = between_total / total
         higher_frac = higher_total / total
         
-        # Sum to 1.0
-        score = within_frac - 0.5 * between_frac - 2.0 * higher_frac
-        
-        # Normalize to [0, 1]
-        # Best: within=1.0 → score = 1.0
-        # Worst: higher=1.0 → score = -2.0
-        # Range: [-2.0, 1.0] → map to [0, 1]
-        return max(0.0, min(1.0, (score + 2.0) / 3.0))
+        weighted_score = (
+            self.within_score_weight * within_frac
+            + self.between_score_weight * between_frac
+            + self.higher_score_weight * higher_frac
+        )
+        return weighted_score
     
     
     
@@ -268,6 +269,9 @@ class PartitionInterpreter:
         featurizer,
         model,
         remove_single_atom_contributions=False,
+        within_score_weight=1.0,
+        between_score_weight=-0.5,
+        higher_score_weight=-2.0,
     ):
         """
         Partition interpreter for a fitted Buhito
@@ -285,6 +289,22 @@ class PartitionInterpreter:
         self.remove_single_atom_contributions = bool(
             remove_single_atom_contributions
         )
+
+        self.within_score_weight = float(within_score_weight)
+        self.between_score_weight = float(between_score_weight)
+        self.higher_score_weight = float(higher_score_weight)
+        score_weights = np.asarray(
+            [
+                self.within_score_weight,
+                self.between_score_weight,
+                self.higher_score_weight,
+            ],
+            dtype=float,
+        )
+        if not np.all(np.isfinite(score_weights)):
+            raise ValueError('Interpretability score weights must be finite.')
+        if np.isclose(score_weights.min(), score_weights.max()):
+            raise ValueError('At least two interpretability score weights must differ.')
 
         # Molecule-dependent caches.
         self._graph_cache = {}
@@ -1204,7 +1224,10 @@ class PartitionInterpreter:
             higher_order=dict(higher_order),
             total_prediction=total_pred,
             partition=partition.copy(),
-            atom_baseline=atom_baseline
+            atom_baseline=atom_baseline,
+            within_score_weight=self.within_score_weight,
+            between_score_weight=self.between_score_weight,
+            higher_score_weight=self.higher_score_weight,
         )
     
     def compute_single_atom_move(
@@ -1360,7 +1383,10 @@ class PartitionInterpreter:
             higher_order=higher_order,
             total_prediction=current_interpretation.total_prediction,
             partition=candidate_partition,
-            atom_baseline=current_interpretation.atom_baseline
+            atom_baseline=current_interpretation.atom_baseline,
+            within_score_weight=self.within_score_weight,
+            between_score_weight=self.between_score_weight,
+            higher_score_weight=self.higher_score_weight,
         )
 
     def clear_cache(self):

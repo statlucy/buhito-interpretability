@@ -151,14 +151,21 @@ def load_molecule(canonical):
     return value, False
 
 
-def load_context(canonical, target, versions, mol, graph, featurizer, model):
+def load_context(canonical, target, versions, mol, graph, featurizer, model, score_weights):
     """Reuse molecule features across properties; coefficient-weighted instances stay isolated."""
-    key = (canonical, target, versions)
+    key = (canonical, target, versions, score_weights)
     if key in _CONTEXTS:
         _CONTEXTS.move_to_end(key)
         interpreter, prediction = _CONTEXTS[key]
         return interpreter, prediction, True, True
-    interpreter = PartitionInterpreter(featurizer, model, remove_single_atom_contributions=False)
+    interpreter = PartitionInterpreter(
+        featurizer,
+        model,
+        remove_single_atom_contributions=False,
+        within_score_weight=score_weights[0],
+        between_score_weight=score_weights[1],
+        higher_score_weight=score_weights[2],
+    )
     interpreter.register_graph(mol, graph)
     feature_key = (canonical, versions[0])
     feature_hit = feature_key in _FEATURES
@@ -178,18 +185,25 @@ def load_context(canonical, target, versions, mol, graph, featurizer, model):
     return interpreter, prediction, feature_hit, False
 
 
-def analyze(smiles, ks, iterations, beta, initialization, seed, weight, singleton_weight, models_dir, target="e_lumo", time_budget_seconds=None):
+def analyze(smiles, ks, iterations, beta, initialization, seed, weight, singleton_weight, models_dir,
+            target="e_lumo", time_budget_seconds=None, within_score_weight=1.0,
+            between_score_weight=-0.5, higher_score_weight=-2.0):
     started = perf_counter()
     deadline = None if time_budget_seconds is None else started + float(time_budget_seconds)
     timings = {}
     config = property_config(target)
+    score_weights = (float(within_score_weight), float(between_score_weight), float(higher_score_weight))
+    if not np.all(np.isfinite(score_weights)):
+        raise ValueError('Interpretability score weights must be finite.')
+    if np.isclose(min(score_weights), max(score_weights)):
+        raise ValueError('At least two interpretability score weights must differ.')
     if not ks:
         raise ValueError('Select at least one k value.')
     canonical = canonicalize_smiles(smiles)
     ks = sorted(set(map(int, ks)))
     versions = artifact_versions(models_dir, target)
     cache_key = (canonical, target, tuple(ks), iterations, beta, initialization,
-                 seed, weight, singleton_weight, versions, time_budget_seconds)
+                 seed, weight, singleton_weight, score_weights, versions, time_budget_seconds)
     if seed is not None and cache_key in _RESULTS:
         _RESULTS.move_to_end(cache_key)
         payload = deepcopy(_RESULTS[cache_key])
@@ -205,7 +219,7 @@ def analyze(smiles, ks, iterations, beta, initialization, seed, weight, singleto
     timings["model_loading"] = perf_counter() - stage_started
     stage_started = perf_counter()
     interpreter, prediction, feature_hit, context_hit = load_context(
-        canonical, target, versions, mol, graph, featurizer, model)
+        canonical, target, versions, mol, graph, featurizer, model, score_weights)
     timings['features_and_prediction'] = perf_counter() - stage_started
     results = []
     for index, k in enumerate(ks):
@@ -249,7 +263,11 @@ def analyze(smiles, ks, iterations, beta, initialization, seed, weight, singleto
         complete=complete, preprocessing_cache=dict(molecule=molecule_hit, features=feature_hit, interpreter=context_hit), skipped_ks=[k for k in ks if k not in [r['k'] for r in results]], target=target, property_label=config["label"], cache_hit=False,
         smiles=canonical, mol=mol.ToBinary(), prediction=prediction, results=results,
         settings=dict(iterations=iterations, beta=beta, initialization=initialization, seed=seed,
-                      weight=weight, singleton_weight=singleton_weight, time_budget_seconds=time_budget_seconds))
+                      weight=weight, singleton_weight=singleton_weight,
+                      within_score_weight=score_weights[0],
+                      between_score_weight=score_weights[1],
+                      higher_score_weight=score_weights[2],
+                      time_budget_seconds=time_budget_seconds))
     # Do not cache if files changed during a computation. A new request must reload them.
     if complete and seed is not None and artifact_versions(models_dir, target) == versions:
         _retain(_RESULTS, cache_key, deepcopy(payload), RESULT_CACHE_SIZE)

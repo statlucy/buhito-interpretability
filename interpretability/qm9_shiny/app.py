@@ -45,6 +45,15 @@ app_ui = ui.page_sidebar(
         ui.input_numeric('seed','Random seed',42,min=0,max=4294967295),
         ui.input_numeric('weight','Connectivity weight (λ)',.10,min=0,max=10,step=.01),
         ui.input_numeric('singleton','Disconnected singleton weight',2,min=1,max=100,step=.5),
+        ui.h5('Interpretability score weights'),
+        ui.input_numeric('within_score_weight', 'Within-partition contribution', 1.0,
+            min=-100, max=100, step=.1),
+        ui.input_numeric('between_score_weight', 'Between-partition contribution', -0.5,
+            min=-100, max=100, step=.1),
+        ui.input_numeric('higher_score_weight', 'Higher-order contribution', -2.0,
+            min=-100, max=100, step=.1),
+        ui.p('Score = within weight × within fraction + between weight × between fraction + higher-order weight × higher fraction. The result is normalized to 0–1.',
+             class_='text-muted small'),
         ui.input_action_button('analyze','Preparing models…', disabled=True),
         ui.input_action_button('retry_preload', 'Retry model preparation'),
         ui.p('Explicit hydrogens are included, matching model training.'),width=330),
@@ -143,6 +152,9 @@ def server(input, output, session):
                 )
             iterations, seed = input.iterations(),input.seed()
             beta, weight, singleton = input.beta(),input.weight(),input.singleton()
+            within_score_weight = input.within_score_weight()
+            between_score_weight = input.between_score_weight()
+            higher_score_weight = input.higher_score_weight()
             if not input.smiles().strip() or not ks:
                 raise ValueError('Enter a SMILES string and at least one partition number.')
             if any(k < 2 for k in ks):
@@ -150,7 +162,8 @@ def server(input, output, session):
             if len(set(ks)) != len(ks):
                 raise ValueError('Enter each partition number only once.')
             import math
-            nums = [iterations, seed, beta, weight, singleton]
+            nums = [iterations, seed, beta, weight, singleton, within_score_weight,
+                    between_score_weight, higher_score_weight]
             if any(v is None or not math.isfinite(v) for v in nums):
                 raise ValueError('All settings must be finite numbers.')
             if iterations != int(iterations) or not 1 <= iterations <= 100000:
@@ -159,8 +172,12 @@ def server(input, output, session):
                 raise ValueError('Seed must be an integer from 0 to 4294967295.')
             if not 0 <= beta <= 1000 or not 0 <= weight <= 10 or not 1 <= singleton <= 100:
                 raise ValueError('Search settings are outside their allowed ranges.')
+            score_weights = (within_score_weight, between_score_weight, higher_score_weight)
+            if math.isclose(min(score_weights), max(score_weights)):
+                raise ValueError('At least two interpretability score weights must differ.')
             args = (input.smiles(),ks,int(iterations),float(beta),input.initialization(),
-                    int(seed),float(weight),float(singleton),MODEL_DIR,input.target(),None)
+                    int(seed),float(weight),float(singleton),MODEL_DIR,input.target(),None,
+                    float(within_score_weight),float(between_score_weight),float(higher_score_weight))
             completed.set(None)
             message.set(f'Running {property_config(input.target())["label"]} Metropolis–Hastings… Results will appear when all selected k values finish.')
             busy.set(True)
