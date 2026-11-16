@@ -1,4 +1,4 @@
-"""Molecule drawing and score panels"""
+"""Molecule drawing and score panels use the notebook's exact definitions."""
 import io
 import numpy as np
 from matplotlib import colormaps
@@ -83,10 +83,10 @@ def result_figure(payload, index):
 
 
 def mh_diagnostics_figure(payload, index):
-    """Histogram of the states occupied by the MH chain for one k value."""
+    """Histogram of post-warm-up states occupied by the MH chain for one k."""
     r = payload['results'][index]
     diagnostics = r.get('mh_diagnostics') or {}
-    energy_trace = diagnostics.get('energy_trace', [])
+    energy_trace = diagnostics.get('post_warmup_energy_trace') or diagnostics.get('energy_trace', [])
     fig = Figure(figsize=(9, 3.2), layout='constrained', facecolor='white')
     ax = fig.add_subplot(1, 1, 1)
     if energy_trace:
@@ -100,7 +100,7 @@ def mh_diagnostics_figure(payload, index):
     else:
         ax.text(.5, .5, 'No MH trace available', ha='center', va='center',
                 transform=ax.transAxes)
-    ax.set_title(f"Histogram of MH states visited (k = {r['k']})", fontweight='bold')
+    ax.set_title(f"Histogram of post-warm-up MH states (k = {r['k']})", fontweight='bold')
     ax.set_xlabel('Energy: E = − adjusted score (dimensionless)')
     ax.set_ylabel('Frequency (iterations)')
     return fig

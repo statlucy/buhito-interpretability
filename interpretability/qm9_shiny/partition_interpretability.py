@@ -1756,6 +1756,10 @@ class PartitionOptimizer:
     initial_partition: Optional[Dict[int, int]] = None,
     initialization: str = "distance",
     seed: Optional[int] = None,
+    target_acceptance_rate: float = 0.30,
+    warmup_iterations: Optional[int] = None,
+    adaptation_window: int = 25,
+    adaptation_gain: float = 0.75,
     verbose: bool = True
 ) -> PartitionInterpretation:
         """
@@ -1807,7 +1811,9 @@ class PartitionOptimizer:
                 )
             ) 
 
-        The highest-scoring partition encountered is returned.
+        During warm-up, beta is adjusted every ``adaptation_window`` valid
+        proposals toward ``target_acceptance_rate``. Beta is frozen after
+        warm-up. The highest-scoring partition encountered is returned.
         """
 
         # =====================================================================
@@ -1819,12 +1825,33 @@ class PartitionOptimizer:
                 "n_iterations must be at least 1."
             )
 
-        if beta < 0:
+        if beta <= 0:
             raise ValueError(
-                "beta must be nonnegative."
+                "beta must be positive when adaptive tuning is enabled."
             )
 
+        if not 0.0 < target_acceptance_rate < 1.0:
+            raise ValueError("target_acceptance_rate must be strictly between 0 and 1.")
+
+        if adaptation_window < 1:
+            raise ValueError("adaptation_window must be at least 1.")
+
+        if adaptation_gain <= 0.0:
+            raise ValueError("adaptation_gain must be positive.")
+
+        if warmup_iterations is None:
+            # Reserve 20% of the chain for tuning while retaining at least
+            # one post-warm-up iteration whenever possible.
+            warmup_iterations = min(n_iterations // 5, max(0, n_iterations - 1))
+        else:
+            warmup_iterations = int(warmup_iterations)
+            if not 0 <= warmup_iterations < n_iterations:
+                raise ValueError(
+                    "warmup_iterations must be nonnegative and less than n_iterations."
+                )
+
         rng = np.random.default_rng(seed)
+        current_beta = float(beta)
 
         n_atoms = mol.GetNumAtoms()
         n_bonds = mol.GetNumBonds()
@@ -2050,6 +2077,15 @@ class PartitionOptimizer:
         accepted_improving_moves = 0
         accepted_worse_moves = 0
 
+        warmup_valid_proposals = 0
+        warmup_accepted_moves = 0
+        post_warmup_valid_proposals = 0
+        post_warmup_accepted_moves = 0
+        window_valid_proposals = 0
+        window_accepted_moves = 0
+        beta_updates = 0
+        beta_history = [{"iteration": 0, "beta": current_beta}]
+
         same_partition_proposals = 0
         singleton_source_proposals = 0
         valid_move_proposals = 0
@@ -2061,6 +2097,26 @@ class PartitionOptimizer:
         # from rejected/invalid proposals accurately represents time spent in
         # each state rather than only the accepted moves.
         score_trace = [float(current_score)]
+
+        def adapt_beta_from_window(iteration):
+            """Update beta once from a warm-up window of valid proposals."""
+            nonlocal current_beta, window_valid_proposals
+            nonlocal window_accepted_moves, beta_updates
+
+            if window_valid_proposals == 0:
+                return
+
+            window_rate = window_accepted_moves / window_valid_proposals
+            # A rate above target means moves are too easy to accept, so
+            # increase beta. A rate below target decreases beta.
+            log_beta = np.log(current_beta) + adaptation_gain * (
+                window_rate - target_acceptance_rate
+            )
+            current_beta = float(np.clip(np.exp(log_beta), 1e-6, 1e6))
+            beta_updates += 1
+            beta_history.append({"iteration": int(iteration), "beta": current_beta})
+            window_valid_proposals = 0
+            window_accepted_moves = 0
 
         # =====================================================================
         # PRINT INITIAL INFORMATION
@@ -2106,8 +2162,13 @@ class PartitionOptimizer:
             )
 
             print(
-                f"  beta: "
-                f"{beta:.4f}"
+                f"  initial beta: "
+                f"{current_beta:.4f}"
+            )
+
+            print(
+                f"  adaptive warm-up: {warmup_iterations} iterations; "
+                f"target acceptance: {target_acceptance_rate:.1%}"
             )
 
             print(
@@ -2183,6 +2244,8 @@ class PartitionOptimizer:
 
                 same_partition_proposals += 1
                 score_trace.append(float(current_score))
+                if iteration == warmup_iterations:
+                    adapt_beta_from_window(iteration)
                 continue
 
             # -----------------------------------------------------------------
@@ -2203,9 +2266,16 @@ class PartitionOptimizer:
 
                 singleton_source_proposals += 1
                 score_trace.append(float(current_score))
+                if iteration == warmup_iterations:
+                    adapt_beta_from_window(iteration)
                 continue
 
             valid_move_proposals += 1
+            if iteration <= warmup_iterations:
+                warmup_valid_proposals += 1
+                window_valid_proposals += 1
+            else:
+                post_warmup_valid_proposals += 1
 
             # -----------------------------------------------------------------
             # 5. MOVE ONLY THE CANDIDATE.
@@ -2318,7 +2388,7 @@ class PartitionOptimizer:
             # -----------------------------------------------------------------
 
             log_acceptance_ratio = (
-                beta
+                current_beta
                 * score_change
             )
 
@@ -2383,6 +2453,12 @@ class PartitionOptimizer:
 
                     accepted_worse_moves += 1
 
+                if iteration <= warmup_iterations:
+                    warmup_accepted_moves += 1
+                    window_accepted_moves += 1
+                else:
+                    post_warmup_accepted_moves += 1
+
                 # -------------------------------------------------------------
                 # Track highest-scoring state encountered.
                 # -------------------------------------------------------------
@@ -2408,6 +2484,12 @@ class PartitionOptimizer:
                     best_iteration = (
                         iteration
                     )
+
+            if iteration <= warmup_iterations and (
+                window_valid_proposals >= adaptation_window
+                or iteration == warmup_iterations
+            ):
+                adapt_beta_from_window(iteration)
 
             # Record the (possibly unchanged) state after this MH step.
             score_trace.append(float(current_score))
@@ -2437,7 +2519,8 @@ class PartitionOptimizer:
                     f"  Iteration {iteration:5d}: "
                     f"current={current_score:.6f}, "
                     f"best={best_score:.6f}, "
-                    f"acceptance={acceptance_rate:.3f}"
+                    f"acceptance={acceptance_rate:.3f}, "
+                    f"beta={current_beta:.3g}"
                 )
 
         # =====================================================================
@@ -2454,6 +2537,21 @@ class PartitionOptimizer:
         else:
 
             acceptance_rate = 0.0
+
+        warmup_acceptance_rate = (
+            warmup_accepted_moves / warmup_valid_proposals
+            if warmup_valid_proposals > 0 else 0.0
+        )
+        post_warmup_acceptance_rate = (
+            post_warmup_accepted_moves / post_warmup_valid_proposals
+            if post_warmup_valid_proposals > 0 else 0.0
+        )
+        if warmup_iterations > 0:
+            post_warmup_score_trace = score_trace[warmup_iterations + 1:]
+        else:
+            post_warmup_score_trace = list(score_trace)
+        if not post_warmup_score_trace:
+            post_warmup_score_trace = [score_trace[-1]]
 
         if verbose:
 
@@ -2503,6 +2601,17 @@ class PartitionOptimizer:
             )
 
             print(
+                f"  Post-warm-up acceptance rate: "
+                f"{post_warmup_acceptance_rate:.4f} "
+                f"(target {target_acceptance_rate:.2f})"
+            )
+
+            print(
+                f"  Final beta after warm-up: "
+                f"{current_beta:.4f}"
+            )
+
+            print(
                 f"  Best iteration: "
                 f"{best_iteration}"
             )
@@ -2530,9 +2639,18 @@ class PartitionOptimizer:
         best_interp.mh_iterations_completed = int(n_iterations)
         best_interp.mh_stopped_early = False
         best_interp.mh_diagnostics = {
-            "beta": float(beta),
+            "beta": float(current_beta),
+            "initial_beta": float(beta),
+            "final_beta": float(current_beta),
+            "target_acceptance_rate": float(target_acceptance_rate),
+            "warmup_iterations": int(warmup_iterations),
+            "adaptation_window": int(adaptation_window),
+            "beta_updates": int(beta_updates),
+            "beta_history": beta_history,
             "score_trace": score_trace,
             "energy_trace": [-value for value in score_trace],
+            "post_warmup_score_trace": post_warmup_score_trace,
+            "post_warmup_energy_trace": [-value for value in post_warmup_score_trace],
             "iterations": int(n_iterations),
             "valid_proposals": int(valid_move_proposals),
             "accepted_moves": int(accepted_moves),
@@ -2542,6 +2660,12 @@ class PartitionOptimizer:
             "same_partition_proposals": int(same_partition_proposals),
             "singleton_source_proposals": int(singleton_source_proposals),
             "acceptance_rate": float(acceptance_rate),
+            "warmup_valid_proposals": int(warmup_valid_proposals),
+            "warmup_accepted_moves": int(warmup_accepted_moves),
+            "warmup_acceptance_rate": float(warmup_acceptance_rate),
+            "post_warmup_valid_proposals": int(post_warmup_valid_proposals),
+            "post_warmup_accepted_moves": int(post_warmup_accepted_moves),
+            "post_warmup_acceptance_rate": float(post_warmup_acceptance_rate),
             "initial_score": float(score_trace[0]),
             "final_score": float(score_trace[-1]),
             "best_score": float(best_score),

@@ -40,7 +40,9 @@ app_ui = ui.page_sidebar(
         ui.p('Enter one or more integer values. Each must be at least 2 and no greater than the molecule’s atom count, including explicit hydrogens.',
              class_='text-muted small'),
         ui.input_numeric('iterations','Maximum MH iterations per k',1000,min=1,max=100000),
-        ui.input_numeric('beta','MH beta',20,min=0,max=1000),
+        ui.input_numeric('beta','Initial MH beta',20,min=.001,max=1000),
+        ui.p('MH adapts beta during the first 20% of iterations toward a 30% acceptance rate, then keeps beta fixed (in inverse adjusted-score units).',
+             class_='text-muted small'),
         ui.input_select('initialization','Initialization',{'distance':'Distance','random':'Random'}),
         ui.input_numeric('seed','Random seed',42,min=0,max=4294967295),
         ui.input_numeric('weight','Connectivity weight (λ)',.10,min=0,max=10,step=.01),
@@ -52,7 +54,7 @@ app_ui = ui.page_sidebar(
             min=-100, max=100, step=.1),
         ui.input_numeric('higher_score_weight', 'Higher-order contribution', -2.0,
             min=-100, max=100, step=.1),
-        ui.p('Score = within weight × within fraction + between weight × between fraction + higher-order weight × higher fraction. The result is normalized to 0–1.',
+        ui.p('Score = within weight × within fraction + between weight × between fraction + higher-order weight × higher fraction.',
              class_='text-muted small'),
         ui.input_action_button('analyze','Preparing models…', disabled=True),
         ui.input_action_button('retry_preload', 'Retry model preparation'),
@@ -170,7 +172,7 @@ def server(input, output, session):
                 raise ValueError('Iterations must be an integer from 1 to 100000.')
             if seed != int(seed) or not 0 <= seed <= 4294967295:
                 raise ValueError('Seed must be an integer from 0 to 4294967295.')
-            if not 0 <= beta <= 1000 or not 0 <= weight <= 10 or not 1 <= singleton <= 100:
+            if not .001 <= beta <= 1000 or not 0 <= weight <= 10 or not 1 <= singleton <= 100:
                 raise ValueError('Search settings are outside their allowed ranges.')
             score_weights = (within_score_weight, between_score_weight, higher_score_weight)
             if math.isclose(min(score_weights), max(score_weights)):
@@ -262,12 +264,19 @@ def server(input, output, session):
             return ui.div(
                 ui.h5('MH diagnostics'),
                 ui.p(
-                    f"β = {d['beta']:.3g} inverse adjusted-score units "
-                    "(the adjusted score and energy are dimensionless)."
+                    f"Target acceptance: {d.get('target_acceptance_rate', .30):.0%}; "
+                    f"warm-up: {d.get('warmup_iterations', 0)} iterations. "
+                    f"β: {d.get('initial_beta', d['beta']):.3g} initial → "
+                    f"{d.get('final_beta', d['beta']):.3g} fixed after warm-up."
                 ),
                 ui.tags.ul(
                     ui.tags.li(
-                        f"Accepted moves: {d['accepted_moves']} "
+                        f"Post-warm-up acceptance: {d.get('post_warmup_accepted_moves', 0)} "
+                        f"({d.get('post_warmup_acceptance_rate', 0.0):.1%} of "
+                        f"{d.get('post_warmup_valid_proposals', 0)} valid proposals)"
+                    ),
+                    ui.tags.li(
+                        f"All-chain accepted moves: {d['accepted_moves']} "
                         f"({d['acceptance_rate']:.1%} of {d['valid_proposals']} valid proposals)"
                     ),
                     ui.tags.li(f"Rejected valid moves: {d['rejected_valid_moves']}"),
