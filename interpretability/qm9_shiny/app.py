@@ -281,8 +281,9 @@ def server(input, output, session):
                     ),
                     ui.tags.li(f"Rejected valid moves: {d['rejected_valid_moves']}"),
                     ui.tags.li(
-                        f"Invalid proposals: {invalid} ({d['same_partition_proposals']} same-partition; "
-                        f"{d['singleton_source_proposals']} would empty a partition)"
+                        f"Invalid candidates redrawn: {invalid} ({d['same_partition_proposals']} same-partition; "
+                        f"{d['singleton_source_proposals']} would empty a partition). "
+                        "These do not count toward MH iterations."
                     ),
                     ui.tags.li(
                         f"Accepted improvements: {d['accepted_improving_moves']}; "

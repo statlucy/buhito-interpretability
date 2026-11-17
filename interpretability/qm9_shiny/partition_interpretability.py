@@ -1768,14 +1768,13 @@ class PartitionOptimizer:
 
         One proposal is:
 
-            1. Randomly choose one molecular bond.
-            2. Randomly choose one endpoint as the candidate atom.
-            3. Let the other endpoint define the destination partition.
-            4. If the atoms are in different partitions, move ONLY the
-            candidate atom into the neighbor's partition.
-            5. Reject the proposal if moving the candidate would empty
-            its current partition.
-            6. Accept or reject the candidate using the Metropolis rule.
+            1. Randomly choose one molecular bond and one endpoint.
+            2. Redraw until the selected atom can move into its bonded
+               neighbor's partition without emptying its source partition.
+            3. Accept or reject that valid candidate using the Metropolis rule.
+
+        Thus, ``n_iterations`` counts valid scored proposals. Invalid bond-endpoint
+        draws are tracked as redraw diagnostics but never consume an iteration.
 
         Unlike the previous implementation, partition labels are NOT swapped.
 
@@ -2189,86 +2188,43 @@ class PartitionOptimizer:
             n_iterations + 1
         ):
 
-            # -----------------------------------------------------------------
-            # 1. Select a molecular bond uniformly.
-            # -----------------------------------------------------------------
+            # Draw bond-endpoint candidates until one is a legal move. The
+            # rejection sampling preserves a uniform distribution over legal
+            # directed bond moves while ensuring every iteration is scored.
+            partition_sizes = defaultdict(int)
+            for partition_id in current_partition.values():
+                partition_sizes[partition_id] += 1
 
-            bond_index = int(
-                rng.integers(
-                    0,
-                    n_bonds
+            has_valid_move = any(
+                current_partition[candidate_atom] != current_partition[neighbor_atom]
+                and partition_sizes[current_partition[candidate_atom]] > 1
+                for atom_a, atom_b in molecular_bonds
+                for candidate_atom, neighbor_atom in ((atom_a, atom_b), (atom_b, atom_a))
+            )
+            if not has_valid_move:
+                raise RuntimeError(
+                    "No valid neighboring-partition move remains. Reduce k or "
+                    "use a molecule with a partition boundary containing a "
+                    "non-singleton source partition."
                 )
-            )
 
-            atom_a, atom_b = (
-                molecular_bonds[bond_index]
-            )
+            while True:
+                bond_index = int(rng.integers(0, n_bonds))
+                atom_a, atom_b = molecular_bonds[bond_index]
+                if rng.random() < 0.5:
+                    candidate_atom, neighbor_atom = atom_a, atom_b
+                else:
+                    candidate_atom, neighbor_atom = atom_b, atom_a
 
-            # -----------------------------------------------------------------
-            # 2. Randomly select ONE endpoint as the candidate.
-            #
-            # The other endpoint only determines the destination partition.
-            # -----------------------------------------------------------------
-
-            if rng.random() < 0.5:
-
-                candidate_atom = atom_a
-                neighbor_atom = atom_b
-
-            else:
-
-                candidate_atom = atom_b
-                neighbor_atom = atom_a
-
-            source_partition_id = (
-                current_partition[
-                    candidate_atom
-                ]
-            )
-
-            destination_partition_id = (
-                current_partition[
-                    neighbor_atom
-                ]
-            )
-
-            # -----------------------------------------------------------------
-            # 3. Candidate and neighbor must currently belong to different
-            #    partitions.
-            # -----------------------------------------------------------------
-
-            if (
-                source_partition_id
-                == destination_partition_id
-            ):
-
-                same_partition_proposals += 1
-                score_trace.append(float(current_score))
-                if iteration == warmup_iterations:
-                    adapt_beta_from_window(iteration)
-                continue
-
-            # -----------------------------------------------------------------
-            # 4. Preserve exactly k nonempty partitions.
-            #
-            # Since this is no longer a swap, moving the final atom out of a
-            # partition would cause that partition to disappear.
-            # -----------------------------------------------------------------
-
-            source_partition_size = sum(
-                partition_id
-                == source_partition_id
-                for partition_id
-                in current_partition.values()
-            )
-
-            if source_partition_size <= 1:
-
-                singleton_source_proposals += 1
-                score_trace.append(float(current_score))
-                if iteration == warmup_iterations:
-                    adapt_beta_from_window(iteration)
-                continue
+                source_partition_id = current_partition[candidate_atom]
+                destination_partition_id = current_partition[neighbor_atom]
+                if source_partition_id == destination_partition_id:
+                    same_partition_proposals += 1
+                    continue
+                if partition_sizes[source_partition_id] <= 1:
+                    singleton_source_proposals += 1
+                    continue
+                break
 
             valid_move_proposals += 1
             if iteration <= warmup_iterations:
