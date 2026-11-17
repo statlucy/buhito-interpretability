@@ -92,8 +92,8 @@ def mh_diagnostics_figure(payload, index):
     if energy_trace:
         bins = min(30, max(5, int(np.sqrt(len(energy_trace)))))
         ax.hist(energy_trace, bins=bins, color='#5b8fbc', edgecolor='white')
-        ax.axvline(energy_trace[-1], color='#d86060', linewidth=1.5,
-                   label='Final state')
+        ax.axvline(np.median(energy_trace), color='#d86060', linewidth=1.5,
+                   label='Median sampled state')
         ax.axvline(-diagnostics.get('best_score', r['adjusted']), color='#459c75',
                    linewidth=1.5, linestyle='--', label='Best state')
         ax.legend(frameon=False, fontsize=8)
