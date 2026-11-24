@@ -83,24 +83,62 @@ def result_figure(payload, index):
 
 
 def mh_diagnostics_figure(payload, index):
-    """Histogram of post-warm-up states occupied by the MH chain for one k."""
+    """Histograms of the post-warm-up and warm-up MH states for one k."""
     r = payload['results'][index]
     diagnostics = r.get('mh_diagnostics') or {}
-    energy_trace = diagnostics.get('post_warmup_energy_trace') or diagnostics.get('energy_trace', [])
-    fig = Figure(figsize=(9, 3.2), layout='constrained', facecolor='white')
-    ax = fig.add_subplot(1, 1, 1)
-    if energy_trace:
-        bins = min(30, max(5, int(np.sqrt(len(energy_trace)))))
-        ax.hist(energy_trace, bins=bins, color='#5b8fbc', edgecolor='white')
-        ax.axvline(np.median(energy_trace), color='#d86060', linewidth=1.5,
-                   label='Median sampled state')
-        ax.axvline(-diagnostics.get('best_score', r['adjusted']), color='#459c75',
-                   linewidth=1.5, linestyle='--', label='Best state')
-        ax.legend(frameon=False, fontsize=8)
+    post_warmup_energy = (
+        diagnostics.get('post_warmup_energy_trace')
+        or diagnostics.get('energy_trace', [])
+    )
+    all_energy = diagnostics.get('energy_trace', [])
+    warmup_iterations = int(diagnostics.get('warmup_iterations', 0))
+    warmup_energy = all_energy[:warmup_iterations + 1] if warmup_iterations else []
+
+    fig = Figure(figsize=(9, 6.0), layout='constrained', facecolor='white')
+    post_warmup_ax, warmup_ax = fig.subplots(2, 1)
+
+    if post_warmup_energy:
+        bins = min(30, max(5, int(np.sqrt(len(post_warmup_energy)))))
+        post_warmup_ax.hist(
+            post_warmup_energy, bins=bins, color='#5b8fbc', edgecolor='white'
+        )
+        post_warmup_ax.axvline(
+            np.median(post_warmup_energy), color='#d86060', linewidth=1.5,
+            label='Median sampled state'
+        )
+        post_warmup_ax.axvline(
+            -diagnostics.get('best_score', r['adjusted']), color='#459c75',
+            linewidth=1.5, linestyle='--', label='Best state'
+        )
+        post_warmup_ax.legend(frameon=False, fontsize=8)
     else:
-        ax.text(.5, .5, 'No MH trace available', ha='center', va='center',
-                transform=ax.transAxes)
-    ax.set_title(f"Histogram of post-warm-up MH states (k = {r['k']})", fontweight='bold')
-    ax.set_xlabel('Energy: E = − adjusted score (dimensionless)')
-    ax.set_ylabel('Frequency (iterations)')
+        post_warmup_ax.text(
+            .5, .5, 'No post-warm-up MH trace available', ha='center', va='center',
+            transform=post_warmup_ax.transAxes
+        )
+    post_warmup_ax.set_title(
+        f"Histogram of post-warm-up MH states (k = {r['k']})",
+        fontweight='bold'
+    )
+    post_warmup_ax.set_xlabel('Energy: E = − adjusted score (dimensionless)')
+    post_warmup_ax.set_ylabel('Frequency (iterations)')
+
+    if warmup_energy:
+        bins = min(30, max(5, int(np.sqrt(len(warmup_energy)))))
+        warmup_ax.hist(
+            warmup_energy, bins=bins, color='#efb46d', edgecolor='white'
+        )
+        warmup_ax.axvline(
+            np.median(warmup_energy), color='#d86060', linewidth=1.5,
+            label='Warm-up median state'
+        )
+        warmup_ax.legend(frameon=False, fontsize=8)
+    else:
+        warmup_ax.text(
+            .5, .5, 'No warm-up stage was run', ha='center', va='center',
+            transform=warmup_ax.transAxes
+        )
+    warmup_ax.set_title('Histogram of MH warm-up states', fontweight='bold')
+    warmup_ax.set_xlabel('Energy: E = − adjusted score (dimensionless)')
+    warmup_ax.set_ylabel('Frequency (iterations)')
     return fig

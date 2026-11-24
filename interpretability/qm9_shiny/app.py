@@ -238,7 +238,7 @@ def server(input, output, session):
                               ui.output_plot(f'plot_{r["k"]}', height='760px'),
                               ui.h4('Metropolis–Hastings diagnostics'),
                               ui.output_ui(f'diagnostics_{r["k"]}'),
-                              ui.output_plot(f'mh_plot_{r["k"]}', height='340px'),
+                              ui.output_plot(f'mh_plot_{r["k"]}', height='620px'),
                               ui.download_button(f'png_{r["k"]}','Download PNG'))
                   for r in payload['results']]
         return ui.div(
